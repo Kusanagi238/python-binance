@@ -1,12 +1,11 @@
 import asyncio
-from decimal import Decimal
 import json
-from typing import Union, Optional, Dict
+from datetime import datetime, timezone
+from decimal import Decimal
+from typing import Dict, Optional, Union
 
 import dateparser
 import pytz
-
-from datetime import datetime, timezone
 
 from binance.exceptions import UnknownDateFormat
 
@@ -21,7 +20,7 @@ def date_to_milliseconds(date_str: str) -> int:
     :param date_str: date in readable format, i.e. "January 01, 2018", "11 hours ago UTC", "now UTC"
     """
     # get epoch value in UTC
-    epoch: datetime = datetime.fromtimestamp(0,timezone.utc)
+    epoch: datetime = datetime.fromtimestamp(0, timezone.utc)
     # parse our date string
     d: Optional[datetime] = dateparser.parse(date_str, settings={"TIMEZONE": "UTC"})
     if not d:
@@ -93,10 +92,13 @@ def get_loop():
     inspired by https://stackoverflow.com/questions/46727787/runtimeerror-there-is-no-current-event-loop-in-thread-in-async-apscheduler
     """
     try:
-        loop = asyncio.get_event_loop()
+        # Prefer the running loop to avoid DeprecationWarning in recent Python versions.
+        loop = asyncio.get_running_loop()
         return loop
     except RuntimeError as e:
-        if str(e).startswith("There is no current event loop in thread"):
+        msg = str(e).lower()
+        # No running event loop in this thread — create and set a new one.
+        if "no running event loop" in msg or "there is no current event loop" in msg:
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
             return loop

@@ -1,25 +1,35 @@
-from typing import Dict, Optional
 import asyncio
+from typing import Dict, Optional
 
 from websockets import WebSocketClientProtocol  # type: ignore
 
+from binance.exceptions import BinanceAPIException, BinanceWebsocketUnableToConnect
+
 from .constants import WSListenerState
 from .reconnecting_websocket import ReconnectingWebsocket
-from binance.exceptions import BinanceAPIException, BinanceWebsocketUnableToConnect
 
 
 class WebsocketAPI(ReconnectingWebsocket):
-    def __init__(self, url: str, tld: str = "com", testnet: bool = False, https_proxy: Optional[str] = None):
+    def __init__(
+        self,
+        url: str,
+        tld: str = "com",
+        testnet: bool = False,
+        https_proxy: Optional[str] = None,
+    ):
         self._tld = tld
         self._testnet = testnet
         self._responses: Dict[str, asyncio.Future] = {}
         self._connection_lock: Optional[asyncio.Lock] = None
-        super().__init__(url=url, prefix="", path="", is_binary=False, https_proxy=https_proxy)
+        super().__init__(
+            url=url, prefix="", path="", is_binary=False, https_proxy=https_proxy
+        )
 
     @property
     def connection_lock(self) -> asyncio.Lock:
         if self._connection_lock is None:
-            loop = asyncio.get_event_loop()
+            # Ensure there's a running loop before creating the lock
+            asyncio.get_running_loop()
             self._connection_lock = asyncio.Lock()
         return self._connection_lock
 
@@ -34,9 +44,15 @@ class WebsocketAPI(ReconnectingWebsocket):
             req_id = parsed_msg["id"]
         if "status" in parsed_msg:
             if parsed_msg["status"] != 200:
-                exception = BinanceAPIException(
-                    parsed_msg, parsed_msg["status"], self.json_dumps(parsed_msg["error"])
-                )
+                err = parsed_msg.get("error") or parsed_msg.get("message")
+                code = parsed_msg.get("status")
+                message = None
+                if isinstance(err, dict):
+                    message = err.get("msg") or err.get("message") or str(err)
+                    code = err.get("code", code)
+                else:
+                    message = str(err)
+                exception = BinanceAPIException(parsed_msg, code, message)
         if req_id is not None and req_id in self._responses:
             if exception is not None:
                 self._responses[req_id].set_exception(exception)
@@ -98,7 +114,8 @@ class WebsocketAPI(ReconnectingWebsocket):
         await self._ensure_ws_connection()
 
         # Create future for response
-        future = asyncio.Future()
+        loop = asyncio.get_running_loop()
+        future = loop.create_future()
         self._responses[id] = future
 
         try:
@@ -114,7 +131,16 @@ class WebsocketAPI(ReconnectingWebsocket):
 
             # Check for errors
             if "error" in response:
-                raise BinanceWebsocketUnableToConnect(response["error"])
+                err = response["error"]
+                # Normalize error code and message
+                code = response.get("code")
+                message = None
+                if isinstance(err, dict):
+                    message = err.get("msg") or err.get("message") or str(err)
+                    code = err.get("code", code)
+                else:
+                    message = str(err)
+                raise BinanceAPIException(response, code, message)
 
             return response.get("result", response)
 

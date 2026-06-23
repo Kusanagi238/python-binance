@@ -1,22 +1,20 @@
-from base64 import b64encode
-from pathlib import Path
-import random
-from typing import Dict, Optional, List, Tuple, Union, Any
-
 import asyncio
 import hashlib
 import hmac
+import random
 import time
-from Crypto.PublicKey import RSA, ECC
-from Crypto.Hash import SHA256
-from Crypto.Signature import pkcs1_15, eddsa
 import urllib.parse as _urlencode
+from base64 import b64encode
 from operator import itemgetter
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Tuple, Union
 from urllib.parse import urlencode
 
-from binance.ws.websocket_api import WebsocketAPI
+from Crypto.Hash import SHA256
+from Crypto.PublicKey import ECC, RSA
+from Crypto.Signature import eddsa, pkcs1_15
 
-from .helpers import get_loop
+from binance.ws.websocket_api import WebsocketAPI
 
 
 class BaseClient:
@@ -218,17 +216,36 @@ class BaseClient:
             ws_api_url += f"?timeUnit={self.TIME_UNIT}"
         # Extract proxy from requests_params for WebSocket connections
         https_proxy = None
-        if requests_params and 'proxies' in requests_params:
-            https_proxy = requests_params['proxies'].get('https') or requests_params['proxies'].get('http')
-        
+        if requests_params and "proxies" in requests_params:
+            https_proxy = requests_params["proxies"].get("https") or requests_params[
+                "proxies"
+            ].get("http")
+
         self.ws_api = WebsocketAPI(url=ws_api_url, tld=tld, https_proxy=https_proxy)
         ws_future_url = self.WS_FUTURES_URL.format(tld)
         if testnet:
             ws_future_url = self.WS_FUTURES_TESTNET_URL
         elif demo:
             ws_future_url = self.WS_FUTURES_DEMO_URL
-        self.ws_future = WebsocketAPI(url=ws_future_url, tld=tld, https_proxy=https_proxy)
-        self.loop = loop or get_loop()
+        self.ws_future = WebsocketAPI(
+            url=ws_future_url, tld=tld, https_proxy=https_proxy
+        )
+        # Configure event loop safely: prefer provided loop; otherwise try to get a running loop
+        # or create a new one if none is available. Avoid calling get_loop() unconditionally
+        if loop is not None:
+            self.loop = loop
+        else:
+            try:
+                # If there is a running loop in this thread, use it
+                self.loop = asyncio.get_running_loop()
+            except RuntimeError:
+                # No running loop: create a new event loop and set it
+                self.loop = asyncio.new_event_loop()
+                try:
+                    asyncio.set_event_loop(self.loop)
+                except Exception:
+                    # If setting the loop fails, ignore and keep the created loop
+                    pass
 
     def _get_headers(self) -> Dict:
         headers = {
@@ -405,11 +422,22 @@ class BaseClient:
             "params": params,
         }
         if signed:
-            payload["params"] = self._sign_ws_params(params, self._generate_signature)
+            payload["params"] = self._sign_ws_params(
+                params, self._generate_ws_api_signature
+            )
         return await self.ws_future.request(id, payload)
 
     def _ws_futures_api_request_sync(self, method: str, signed: bool, params: dict):
-        self.loop = get_loop()
+        # Ensure an event loop is available without calling get_loop() unconditionally
+        if getattr(self, "loop", None) is None:
+            try:
+                self.loop = asyncio.get_running_loop()
+            except RuntimeError:
+                self.loop = asyncio.new_event_loop()
+                try:
+                    asyncio.set_event_loop(self.loop)
+                except Exception:
+                    pass
         return self.loop.run_until_complete(
             self._ws_futures_api_request(method, signed, params)
         )
@@ -433,7 +461,16 @@ class BaseClient:
 
     def _ws_api_request_sync(self, method: str, signed: bool, params: dict):
         """Send request to WS API and wait for response"""
-        self.loop = get_loop()
+        # Ensure an event loop is available without calling get_loop() unconditionally
+        if getattr(self, "loop", None) is None:
+            try:
+                self.loop = asyncio.get_running_loop()
+            except RuntimeError:
+                self.loop = asyncio.new_event_loop()
+                try:
+                    asyncio.set_event_loop(self.loop)
+                except Exception:
+                    pass
         return self.loop.run_until_complete(
             self._ws_api_request(method, signed, params)
         )

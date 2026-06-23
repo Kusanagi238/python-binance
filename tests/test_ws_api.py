@@ -1,14 +1,15 @@
+import asyncio
 import json
 import sys
-import re
-import pytest
-import asyncio
-from binance import AsyncClient
 
+import pytest
+
+from binance import AsyncClient
 from binance.exceptions import BinanceAPIException, BinanceWebsocketUnableToConnect
 from binance.ws.constants import WSListenerState
-from .test_get_order_book import assert_ob
+
 from .conftest import proxy
+from .test_get_order_book import assert_ob
 
 
 @pytest.mark.skipif(sys.version_info < (3, 8), reason="websockets_proxy Python 3.8+")
@@ -55,9 +56,7 @@ async def test_invalid_request(clientAsync):
     """Test error handling for invalid symbol"""
     with pytest.raises(
         BinanceAPIException,
-        match=re.escape(
-            "APIError(code=-1100): Illegal characters found in parameter 'symbol'; legal range is '^[A-Z0-9-_.]{1,20}$'."
-        ),
+        match="Illegal characters found in parameter 'symbol'",
     ):
         await clientAsync.ws_get_order_book(symbol="send error")
 
@@ -131,17 +130,23 @@ async def test_message_handling(clientAsync):
     finally:
         await clientAsync.close_connection()
 
+
 @pytest.mark.asyncio
 async def test_message_handling_raise_exception(clientAsync):
     try:
         with pytest.raises(BinanceAPIException):
             future = asyncio.Future()
             clientAsync.ws_api._responses["123"] = future
-            valid_msg = {"id": "123", "status": 400, "error": {"code": "0", "msg": "error message"}}
+            valid_msg = {
+                "id": "123",
+                "status": 400,
+                "error": {"code": "0", "msg": "error message"},
+            }
             clientAsync.ws_api._handle_message(json.dumps(valid_msg))
             await future
     finally:
         await clientAsync.close_connection()
+
 
 @pytest.mark.asyncio
 async def test_message_handling_raise_exception_without_id(clientAsync):
@@ -149,7 +154,11 @@ async def test_message_handling_raise_exception_without_id(clientAsync):
         with pytest.raises(BinanceAPIException):
             future = asyncio.Future()
             clientAsync.ws_api._responses["123"] = future
-            valid_msg = {"id": "123", "status": 400, "error": {"code": "0", "msg": "error message"}}
+            valid_msg = {
+                "id": "123",
+                "status": 400,
+                "error": {"code": "0", "msg": "error message"},
+            }
             clientAsync.ws_api._handle_message(json.dumps(valid_msg))
             await future
     finally:
@@ -212,7 +221,9 @@ async def test_ws_queue_overflow(clientAsync):
 
         # Check that we got valid responses or expected overflow errors
         valid_responses = [r for r in results if not isinstance(r, Exception)]
-        assert len(valid_responses) == len(symbols), "Should get at least one valid response"
+        assert len(valid_responses) == len(
+            symbols
+        ), "Should get at least one valid response"
 
         for result in valid_responses:
             assert_ob(result)

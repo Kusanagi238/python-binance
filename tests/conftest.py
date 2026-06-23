@@ -1,17 +1,18 @@
-import pytest
-import pytest_asyncio
-from binance.client import Client
-from binance.async_client import AsyncClient
-import os
 import asyncio
 import logging
+import os
 
+import pytest
+import pytest_asyncio
+
+from binance.async_client import AsyncClient
+from binance.client import Client
 from binance.ws.streams import ThreadedWebsocketManager
 
 proxies = {}
 proxy = os.getenv("PROXY")
 
-proxy = "http://188.245.226.105:8911"
+# Respect the PROXY environment variable; do not force a hardcoded proxy
 if proxy:
     proxies = {"http": proxy, "https": proxy}  # tmp: improve this in the future
 else:
@@ -22,12 +23,8 @@ api_secret = os.getenv("TEST_API_SECRET")
 futures_api_key = os.getenv("TEST_FUTURES_API_KEY")
 futures_api_secret = os.getenv("TEST_FUTURES_API_SECRET")
 testnet = os.getenv("TEST_TESTNET", "true").lower() == "true"
-api_key = "u4L8MG2DbshTfTzkx2Xm7NfsHHigvafxeC29HrExEmah1P8JhxXkoOu6KntLICUc"
-api_secret = "hBZEqhZUUS6YZkk7AIckjJ3iLjrgEFr5CRtFPp5gjzkrHKKC9DAv4OH25PlT6yq5"
-testnet = True # only for spot now
-demo = True # spot and swap
-futures_api_key = "HjhMFvuF1veWQVdUbLIy7TiCYe9fj4W6sEukmddD8TM9kPVRHMK6nS2SdV5mwE5u"
-futures_api_secret = "Suu9pWcO9zbvVuc6cSQsVuiiw2DmmA8DgHrUfePF9s2RtaHa0zxK3eAF4MfIk7Pd"
+# Do not hardcode credentials in tests; rely on environment variables or proper test mocks
+demo = os.getenv("TEST_DEMO", "false").lower() == "true"
 
 
 # Configure logging for all tests
@@ -58,9 +55,7 @@ def liveClient():
 
 @pytest.fixture(scope="function")
 def futuresClient():
-    return Client(
-        futures_api_key, futures_api_secret, {"proxies": proxies}, demo=demo
-    )
+    return Client(futures_api_key, futures_api_secret, {"proxies": proxies}, demo=demo)
 
 
 @pytest_asyncio.fixture(scope="function")
@@ -91,11 +86,13 @@ async def liveClientAsync():
     finally:
         await client.close_connection()
 
+
 @pytest.fixture(scope="function")
 def manager():
     return ThreadedWebsocketManager(
         api_key="test_key", api_secret="test_secret", https_proxy=proxy, testnet=True
     )
+
 
 @pytest.fixture(autouse=True, scope="function")
 def event_loop():
@@ -107,11 +104,14 @@ def event_loop():
     finally:
         # Clean up pending tasks
         try:
-            pending = asyncio.all_tasks(loop)
+            # Use the current event loop API (do not pass loop argument; compatible with Python 3.12+)
+            pending = asyncio.all_tasks()
             for task in pending:
                 task.cancel()
             if pending:
-                loop.run_until_complete(asyncio.gather(*pending, return_exceptions=True))
+                loop.run_until_complete(
+                    asyncio.gather(*pending, return_exceptions=True)
+                )
         except Exception:
             pass  # Ignore cleanup errors
         finally:
@@ -178,36 +178,40 @@ def pytest_collection_modifyitems(config, items):
             item.add_marker(skip_gift_card)
 
 
-def call_method_and_assert_uri_contains(client, method_name, expected_string, *args, **kwargs):
+def call_method_and_assert_uri_contains(
+    client, method_name, expected_string, *args, **kwargs
+):
     """
     Helper function to test that a client method calls the expected URI.
-    
+
     Args:
         client: The client instance to test
         method_name: Name of the method to call (as string)
         expected_string: String that should be present in the URI
         *args, **kwargs: Arguments to pass to the client method
-    
+
     Returns:
         The result of the method call
     """
     from unittest.mock import patch
-    
-    with patch.object(client, '_request', wraps=client._request) as mock_request:
+
+    with patch.object(client, "_request", wraps=client._request) as mock_request:
         # Get the method from the client and call it
         method = getattr(client, method_name)
         result = method(*args, **kwargs)
-        
+
         # Assert that _request was called
         mock_request.assert_called_once()
-        
+
         # Get the arguments passed to _request
         args_passed, kwargs_passed = mock_request.call_args
-        
+
         # The second argument is the URI
         uri = args_passed[1]
-        
+
         # Assert that the URL contains the expected string
-        assert expected_string in uri, f"Expected '{expected_string}' in URL, but got: {uri}"
-        
+        assert (
+            expected_string in uri
+        ), f"Expected '{expected_string}' in URL, but got: {uri}"
+
         return result
